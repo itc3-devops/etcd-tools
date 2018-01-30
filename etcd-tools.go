@@ -176,7 +176,7 @@ func EtcdPutLeaseForever(key string, value string) {
 	defer cli.Close()
 
 	log.WithFields(log.Fields{"ETCD-Tools": "EtcdPutLeaseForever"}).Info("Getting Dialer Key Options")
-	opts := GetEtcdPutOptions()
+	opts, id := GetEtcdPutOptions()
 
 	_, err = cli.Put(context.TODO(), key, value, opts...)
 	if err != nil {
@@ -194,7 +194,8 @@ func EtcdPutLeaseForever(key string, value string) {
 			fmt.Printf("bad cluster endpoints, which are not etcd servers: %v\n", err)
 		}
 	}
-	go LeaseKeepAliveCommandFunc(LeaseHex)
+	LeaseKeepAliveCommandFunc(id)
+
 }
 
 // LeaseKeepAliveCommandFunc : executes the "lease keep-alive" command.
@@ -206,31 +207,35 @@ func LeaseKeepAliveCommandFunc(leaseID clientv3.LeaseID) {
 	}
 	defer cli.Close()
 
-	fmt.Println("Starting keepalive")
-	id := leaseID
-	respc, kerr := cli.KeepAlive(context.TODO(), id)
-	if kerr != nil {
-		log.WithFields(log.Fields{"vrctl": "ETCD keepalive"}).Error("Starting Keepalive for lease", kerr)
-	}
-	if kerr != nil {
-		switch err {
-		case context.Canceled:
-			fmt.Printf("ctx is canceled by another routine: %v\n", kerr)
-		case context.DeadlineExceeded:
-			fmt.Printf("ctx is attached with a deadline is exceeded: %v\n", kerr)
-		case rpctypes.ErrEmptyKey:
-			fmt.Printf("client-side error: %v\n", kerr)
-		default:
-			fmt.Printf("bad cluster endpoints, which are not etcd servers: %v\n", kerr)
-		}
-	}
-	for resp := range respc {
-		fmt.Println(*resp)
-	}
+	go func() {
+		fmt.Println("Starting Keepalive")
 
+		fmt.Println("LeaseID: ", leaseID)
+		id := leaseID
+		respc, kerr := cli.KeepAlive(context.TODO(), id)
+		if kerr != nil {
+			log.WithFields(log.Fields{"vrctl": "ETCD keepalive"}).Error("Starting Keepalive for lease", kerr)
+		}
+		if kerr != nil {
+			switch err {
+			case context.Canceled:
+				fmt.Printf("ctx is canceled by another routine: %v\n", kerr)
+			case context.DeadlineExceeded:
+				fmt.Printf("ctx is attached with a deadline is exceeded: %v\n", kerr)
+			case rpctypes.ErrEmptyKey:
+				fmt.Printf("client-side error: %v\n", kerr)
+			default:
+				fmt.Printf("bad cluster endpoints, which are not etcd servers: %v\n", kerr)
+			}
+		}
+		for resp := range respc {
+			fmt.Println(*resp)
+		}
+	}()
 }
 
-func GetEtcdPutOptions() []clientv3.OpOption {
+func GetEtcdPutOptions() ([]clientv3.OpOption, clientv3.LeaseID) {
+	var newid clientv3.LeaseID
 	SerialNumber := viper.GetString("SerialNumber")
 	log.WithFields(log.Fields{"ETCD-Tools": "GetEtcdPutOptions"}).Info("Getting ETCD Dialer")
 	cli, err := GetEtcdClient()
@@ -257,7 +262,7 @@ func GetEtcdPutOptions() []clientv3.OpOption {
 		if id != 0 {
 			opts = append(opts, clientv3.WithLease(clientv3.LeaseID(id)))
 		}
-		return opts
+		return opts, id
 
 	}
 	for _, ev := range resp.Kvs {
@@ -270,39 +275,40 @@ func GetEtcdPutOptions() []clientv3.OpOption {
 			if id != 0 {
 				opts = append(opts, clientv3.WithLease(clientv3.LeaseID(id)))
 			}
-			return opts
+			return opts, id
 		}
 		log.WithFields(log.Fields{"ETCD-Tools": "GetEtcdPutOptions"}).Info("Key returned existing LeaseID for this device. Checking to see if it has expired")
 		// leaseInt, err := strconv.ParseInt(value, 64)
 		log.WithFields(log.Fields{"vrctl": "ETCD putLeaseForever"}).Debug("Current Lease:  ", value)
-		id, err := strconv.ParseInt(value, 16, 64)
+		oldid, err := strconv.ParseInt(value, 16, 64)
 		if err != nil {
 			log.WithFields(log.Fields{"vrctl": "ETCD putLeaseForever"}).Error("Error parsing LeaseID:  ", err)
 
 		}
 
-		if id != 0 {
-			opts = append(opts, clientv3.WithLease(clientv3.LeaseID(id)))
+		if oldid != 0 {
+			opts = append(opts, clientv3.WithLease(clientv3.LeaseID(oldid)))
 		}
 
+		hexid := clientv3.LeaseID(oldid)
 		key := string("etcd::lease::test::" + SerialNumber)
 		EtcdPutLeaseTest(key, "34521", opts)
 		_, v := EtcdGetKeyValue(key)
 		if v == "34521" {
-			return opts
+			return opts, hexid
 			log.WithFields(log.Fields{"Task scheduler": "RunScheduledTask8"}).Debug("ETCD Lease is still valid")
 		}
 
 		log.WithFields(log.Fields{"ETCD-Tools": "GetEtcdPutOptions"}).Info("Lease for this device has expired, requesting new lease")
-		newid := GetEtcdLease()
+		newid = GetEtcdLease()
 		log.WithFields(log.Fields{"ETCD-Tools": "GetEtcdPutOptions"}).Info("New lease: ", newid)
 		if newid != 0 {
 			opts = append(opts, clientv3.WithLease(clientv3.LeaseID(newid)))
 		}
-		return opts
+		return opts, newid
 	}
 
-	return opts
+	return opts, newid
 }
 
 // EtcdGetKeyValue : Get a specific ETCD Key and its value returned as strings

@@ -162,8 +162,7 @@ func GetEtcdLease() clientv3.LeaseID {
 
 	//fmt.Printf("lease %016x in simple format\n", LeaseResp.ID)
 
-	go LeaseKeepAliveCommandFunc(LeaseResp.ID)
-	return LeaseHex
+	return LeaseResp.ID
 
 }
 
@@ -176,6 +175,13 @@ func EtcdPutLeaseForever(key string, value string) {
 	defer cli.Close()
 
 	//fmt.Println("Print active lease: ", LeaseHex)
+	leaseCheck := fmt.Sprintln(LeaseHex)
+	if leaseCheck == "" {
+		LeaseHex = GetEtcdLease()
+	}
+	fmt.Println("Print lease hex: ", LeaseHex)
+	lSimple := fmt.Sprintf("%016x", LeaseHex)
+	fmt.Printf("Print lease simple: ", lSimple)
 
 	_, err = cli.Put(context.TODO(), key, value, clientv3.WithLease(LeaseHex))
 	if err != nil {
@@ -193,6 +199,7 @@ func EtcdPutLeaseForever(key string, value string) {
 			fmt.Printf("bad cluster endpoints, which are not etcd servers: %v\n", err)
 		}
 	}
+	go LeaseKeepAliveCommandFunc(LeaseHex)
 }
 
 // LeaseKeepAliveCommandFunc : executes the "lease keep-alive" command.

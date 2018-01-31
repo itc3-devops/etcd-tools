@@ -200,14 +200,15 @@ func EtcdPutLeaseForever(key string, value string) {
 
 // LeaseKeepAliveCommandFunc : executes the "lease keep-alive" command.
 func LeaseKeepAliveCommandFunc(leaseID clientv3.LeaseID) {
-	cli, err := GetEtcdClient()
-	if err != nil {
-		log.WithFields(log.Fields{"ETCD-Tools": "EtcdTlsDialer"}).Error("Failed to start new ETCD client: ", err)
-		os.Exit(1)
-	}
-	defer cli.Close()
-
+	// Running keepalive as a go routine will let it run in the background for as long as the main program runs
 	go func() {
+		cli, err := GetEtcdClient()
+		if err != nil {
+			log.WithFields(log.Fields{"ETCD-Tools": "EtcdTlsDialer"}).Error("Failed to start new ETCD client: ", err)
+			os.Exit(1)
+		}
+		defer cli.Close()
+
 		fmt.Println("Starting Keepalive")
 
 		fmt.Println("LeaseID: ", leaseID)
